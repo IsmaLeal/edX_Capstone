@@ -1,0 +1,872 @@
+---
+title: "**Predicting Heart Disease Diagnosis**"
+subtitle: 'HarvardX Data Science Professional Certificate'
+author: "_Ismael Leal_"
+date: "2023-01-20"
+output:
+  pdf_document:
+    df_print: kable
+    number_sections: yes
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(ggdendro)) install.packages("ggdendro", repos = "http://cran.us.r-project.org")
+if(!require(dendextend)) install.packages("dendextend", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(scales)) install.packages("scales", repos = "http://cran.us.r-project.org")
+if(!require(matrixStats)) install.packages("matrixStats", repos = "http://cran.us.r-project.org")
+if(!require(RColorBrewer)) install.packages("RColorBrewer", repos = "http://cran.us.r-project.org")
+if(!require(xfun)) install.packages("xfun", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", dependencies = c("Depends", "Suggests"), repos = "http://cran.us.r-project.org")
+if(!require(R.utils)) install.packages("R.utils", repos = "http://cran.us.r-project.org")
+if(!require(klaR)) install.packages("klaR", repos = "http://cran.us.r-project.org")
+
+# Set ggplot2 theme
+plot_theme <- theme(plot.caption = element_text(size = 11), axis.title = element_text(size = 10))
+
+# Run code chunk options
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      out.width="80%", fig.align="center")
+
+# Set number of decimals
+options(digits = 3)
+
+# Download data set
+data_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data"
+cleveland <- read.csv(data_url)
+
+# Add column names
+feature_names <- c("age",
+                  "sex",
+                  "chest_pain_type",
+                  "rest_blood_pressure",
+                  "cholesterol",
+                  "fasting_blood_sugar",
+                  "rest_electrocardiographic",
+                  "max_heart_rate",
+                  "exercise_induced_angina",
+                  "old_peak",
+                  "slope",
+                  "vessels_number",
+                  "thalassemia_type",
+                  "diagnosis")
+colnames(cleveland) <- feature_names
+```
+
+\newpage
+
+# *Introduction*
+
+Heart diseases are one of the leading causes of deaths. Just in the United States, one person dies every 34 seconds from a cardiovascular disease, making it the fifth cause of deaths in the US. Still, if diagnosed, with medications and healthy habits the majority of heart conditions can be stabilized. It is obtaining the diagnosis what poses a challenge.
+
+Machine Learning has recently proved itself useful in many medical applications, including medical imaging and diagnosis. Thus, ML algorithms might be able to predict whether a patient has a heart disease or not, making it possible for them to manage their condition and improve survival rates.
+
+The ECG stress tests first measure the heart rate at rest and the blood pressure of the patient. Then, they undergo some exercise (usually walking on a treadmill) that will become progressively more difficult. The heart and breathing rates and the blood pressure are monitored all throughout.
+
+The Processed Cleveland data set is a subset of the Heart Disease Data Set from the UCI Machine Learning repository, a public data set that was donated on 1988. It is a multivariate set of labeled data that has got more than 2 million web hits from the UCI ML repository alone. It's been used in many published experiments with the goal of detecting the presence of a heart disease in a patient. This data set includes the results of ECG stress tests together with biological information on the patients.
+
+This report will analyze the features, samples, and relationships between and within them of the Processed Cleveland data set, with the aim of developing and training various predictive algorithms, both supervised and unsupervised. Then, they will be compared, and the best one will be tested in a final test set. The limitations of the models and opportunities for future work will be discussed as well.
+
+
+
+
+# *Data set Exploration*
+
+## Data set summary
+
+The Heart Disease Processed Cleveland data set can be accessed from the UCI Machine Learning repository. It is a `r class(cleveland)` consisting of `r ncol(cleveland)` columns and `r nrow(cleveland)` rows. The last column shows the diagnosis for each patient, where 0 indicates that the patient doesn't have a heart disease, while the remaining values (i.e. 1, 2, 3, 4) indicate a patient with a heart disease. The first `r ncol(cleveland[, -1])` columns show different medical numeric data about each patient, described in Table 1:
+
+```{r column-description}
+# Create a data frame with descriptions for every column
+column_description <- data.frame(Feature = feature_names,
+                                 Description = c("Age of the patient",
+                                                 "Biological sex (0 = female, 1 = male)",
+                                                 "Chest pain type (1 = typical angina, 2 = atypical angina, 3 = non-anginal pain, \n 4 = asymptomatic)",
+                                                 "Resting blood pressure (in mmHg)",
+                                                 "Serum cholesterol level in mg/dl",
+                                                 "Fasting blood sugar > 120 mg/dl (0 = false, 1 = true)",
+                                                 "Resting electrocardiographic results (0 = normal, 1 = ST-T wave abnormality,\n  2 = left ventricular hypertrophy)",
+                                                 "Maximum heart rate",
+                                                 "Exercise-induced angina (0 = no, 1 = yes)",
+                                                 "ST depression induced by exercise relative to rest",
+                                                 "Slope of the peak exercise ST segment (1 = positive, 2 = flat, 3 = negative)",
+                                                 "Number of major vessels (0, 1, 2, or 3) colored by fluoroscopy",
+                                                 "Thalassemia type (3 = normal, 6 = fixed defect, 7 = reversable defect)",
+                                                 "Diagnosis"))
+column_description %>%
+  kable(caption = "Feature description", align = "ll", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(full_width = FALSE, position = "center", latex_options = c("hold_position", "scale_down"))
+```
+
+Age is usually considered as a significant risk factor for heart diseases; the probability of having one triples with for every 10 years of life.
+
+Regarding sex, men usually are in greater risk of a heart disease compared to women that have not yet experienced menopause. However, women with diabetes are in greater risk of a heart disease than men with diabetes.
+
+The chest_pain_type refers to angina, a pressure-like discomfort that occurs when the heart does not receive enough oxygen. It may also manifest as pain in shoulders, arms, neck, jaw, or back.
+
+A high level of blood pressure may damage arteries and veins near the heart, increasing the risk of a heart disease. Cholesterol levels shouldn't be too high as well, as it can narrow arteries and thus increase pressure. Another feature that, if taking high values, increases the risk of a heart attack, is the fasting_blood_sugar. The increase in sugar levels may happen because of a lack of insulin, of a defective response to it. Another dangerous increase is an increase in the heart rate. It has been shown that an increase in heart rate of 10 beats/min provokes a 20% increase in the risk of cardiac death. 
+
+The rest_electrocardiographic feature value of 1 (ST-T wave abnormality) indicates some type of heart arrhythmia, and together with the value of 2 (left ventricular hypertrophy) both are usually considered as risk factors.
+
+Regarding the slope of the peak exercise ST segment, an upsloping curve show best heart rate with exercise, a flat curve indicates a typical healthy heart, while a negative slope show signs of an unhealthy heart.
+
+Finally, the more vessels a person shows, the more blood movement there is. Thus, patients with less major vessels are more likely to experience a heart disease.
+
+There are `r sum(cleveland$diagnosis == 0)` (`r percent(mean(cleveland$diagnosis == 0), accuracy = 0.01)`) healthy observations and `r sum(!cleveland$diagnosis == 0)` (`r percent(mean(!cleveland$diagnosis == 0), accuracy = 0.01)`) observations with a heart disease present. This might mean that the false negative rate may be masked if not taken into consideration. Nonetheless there is not a massive imbalance between samples with different diagnosis, so it should not be a huge problem. Just in case, an analysis of the sensitivity through the confusion matrix will be done throughout the algorithm development.
+
+Tables 2 & 3 show a summary of the data, demonstrating that every column's values are quite different from the others, as well as their ranges. Hence, the data could be normalized in order to get insightful visualizations that actually help comparing features.
+
+```{r feature-summary-1}
+# Table showing summary data
+summary(cleveland[, 1:7]) %>%
+  kable(caption = "Feature summary (1)", align = "ccccccc", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(position = "center",
+                latex_options = c("scale_down", "hold_position"))
+```
+
+\newpage
+
+```{r class-conversion}
+# Convert from character to integer class
+cols <- c(12, 13)
+cleveland[, cols] = apply(cleveland[, cols], 2, function(x) as.integer(x))
+cleveland <- na.omit(cleveland)
+```
+
+```{r feature-summary-2}
+summary(cleveland[, 8:13]) %>%
+  kable(caption = "Feature summary (2)", align = "cccccc", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(position = "center",
+                latex_options = c("scale_down", "hold_position"))
+
+```
+
+Here, vessels_number and thalassemia_type have been converted to integer class using the function as.integer(), as they were stored like characters.
+
+Note how the features sex, chest_pain_type, fasting_blood_sugar, rest_electrocardiographic, exercise_induced_angina, slope, vessels_number, and thalassemia_type show discrete values, as the descriptions of Table 1 and the summaries of Tables 2 and 3 show. The kind of summary performed in tables 2 and 3 is usually more insightful for the continuous values (age, rest_blood_pressure, cholesterol, max_heart_rate, old_peak)
+
+```{r continuous-variables}
+# Table showing continuous features
+data.frame(List = c("rest_blood_pressure",
+                                   "cholesterol",
+                                   "max_heart_rate",
+                                   "old_peak")) %>%
+  kable(caption = "Continuous features", align = "l", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(position = "center",
+                latex_options = c("hold_position"))
+```
+
+## Data wrangling
+
+The data shows numbers (both integers and rational numbers), and the class or data type of every feature can be seen in Table 5:
+
+```{r feature-class}
+# Create a table displaying the class of every feature
+data.frame("Column name" = feature_names,
+           Class = c(class(cleveland$age),
+                     class(cleveland$sex),
+                     class(cleveland$chest_pain_type),
+                     class(cleveland$rest_blood_pressure),
+                     class(cleveland$cholesterol),
+                     class(cleveland$fasting_blood_sugar),
+                     class(cleveland$rest_electrocardiographic),
+                     class(cleveland$max_heart_rate),
+                     class(cleveland$exercise_induced_angina),
+                     class(cleveland$old_peak),
+                     class(cleveland$slope),
+                     class(cleveland$vessels_number),
+                     class(cleveland$thalassemia_type),
+                     class(cleveland$diagnosis))) %>%
+  kable(caption = "Feature class", align = "l", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(position = "center",
+                latex_options = c("hold_position"))
+```
+
+```{r data-wrangling}
+# Store the diagnosis predictor as a factor
+cleveland$diagnosis <- ifelse(cleveland$diagnosis == 0, "H", "D")
+cleveland$diagnosis <- as.factor(cleveland$diagnosis)
+
+# Free space used
+rm(data_url, cols)
+```
+
+In the Data Set Summary section 2.1, the columns vessels_number and thalassemia_type were reclassified as integer for the creation of Tables 2 & 3. Also, the diagnosis column was reconverted to a factor using "as.factor()", where the levels are "H" for healthy when the diagnosis is 0, and "D" for disease otherwise (i.e. when the disease value is 1, 2, 3, or 4). While converting the columns vessels_number and thalassemia_type to integer, the NA values were removed from the data set "cleveland", obtaining a total of `r nrow(cleveland)` observations.
+
+Also, the data was reconverted to a list, given that many data sets have this form and are easier to work with. The list will have 2 elements:
+
+-   "x": a matrix with all the predictors (columns from 1 to 13 of the data set)
+
+-   "y": a list with all the diagnosis
+
+```{r data-frame-to-list}
+# Save list of matrix x with the data and outcomes y with the diagnosis
+cleveland <- list(x = as.matrix(cleveland[, 1:13]), y = cleveland$diagnosis)
+```
+
+## Training and test sets creation
+
+```{r train-test-sets}
+# Test & train set creation
+set.seed(5, sample.kind = "Rounding")
+
+# List of cleveland rows that will be in the test set
+test_index <- createDataPartition(cleveland$y, times = 1, p = 0.1, list = FALSE)
+train <- list(x = cleveland$x[-test_index, ], y = cleveland$y[-test_index])
+test <- list(x = cleveland$x[test_index, ], y = cleveland$y[test_index])
+```
+
+The data was separated into training and test sets (90% vs 10% of the original data), to create a final test set in which the final algorithm can be tested. This will prevent an over-fitting of the model developed. After the partition, the balance or prevalence of the disease is:
+
+-   `r percent(mean(train$y=="H"), accuracy = 0.01)` of healthy observations in the training set
+
+-   `r percent(mean(test$y == "H"), accuracy = 0.01)` of healthy observations in the test set.
+
+Hence, the prevalence in the test and training sets is almost identical to the prevalence of the joint data in the "cleveland" data set.
+
+## Training set observations exploration
+
+```{r train-set-normalization}
+# Center the train$x data around zero (subtracting the column mean)
+train_centered <- sweep(train$x, 2, colMeans(train$x))
+
+# Fully normalize the train$x data (dividing by the column SD)
+train_set <- sweep(train_centered, 2, colSds(train$x), FUN = "/")
+
+# Remove train_centered
+rm(train_centered)
+```
+
+The normalization of the train set is important so that the different features (as Tables 2 & 3 show) can be compared together. The new data can be obtained by:
+
+```{=tex}
+\begin{equation}
+z = \frac{x - \mu}{\sigma}
+\end{equation}
+```
+where $\mu$ is the feature mean and $\sigma$ is the feature's standard deviation.
+
+```{r distances}
+# Euclidean distances between all observations (all patients)
+d <- dist(train_set)
+
+# Average distance between observations
+mean_dist <- round(mean(as.matrix(d)), 2)
+
+# Average distance between healthy patients
+mean_healthy_dist <- round(mean(as.matrix(d)[train$y == "H"]), 2)
+
+# Average distance between patients with a heart disease
+mean_disease_dist <- round(mean(as.matrix(d)[train$y == "D"]), 2)
+
+# Average distance between healthy patients and patients with a disease
+mean_healthy_disease_dist <- round(mean(as.matrix(d)[train$y == "D", train$y == "H"]), 2)
+```
+
+The dist() function was used to obtain the Euclidean distances between samples (i.e., between rows or patients), in a `r nrow(train_set)` dimensional space (the number of rows or observations in the training set). The average distance between all samples is `r mean_dist`. By calculating conditional averages, it can be inferred that healthy patients are closer to each other (`r mean_healthy_dist`) than to patients with a disease (`r mean_healthy_disease_dist`). Patients with a disease are also closer to each other (`r mean_disease_dist`) than to healthy patients, though they are not as close between them as the healthy patients. Thus, there is greater variance for the features of patients with a disease.
+
+\newpage
+
+```{r heatmap-sample-distances, fig.cap = "Distances between samples as a heatmap"}
+# Heatmap of distances between observations
+heatmap(as.matrix(d), symm = T, revC = T,
+        col = brewer.pal(4, "PuRd"),
+        ColSideColors = ifelse(train$y=="H", "green", "red"),
+        RowSideColors = ifelse(train$y=="H", "green", "red"),
+        labRow = NA, labCol = NA)
+```
+
+The heatmap in Figure 1 shows the distances between samples with a color gradient, where darker colors are displayed for greater distances. Green samples are healthy patients while red samples are patients with a heart disease. It can be seen that observations are not perfectly clustered by diagnosis, although somehow, they are. In general, healthy samples are further apart from samples with a disease present (bottom left, top right) than among themselves (bottom right, central area). Also, in the top left quadrant a lower distance among non-healthy patients can be seen.
+
+## Train set feature exploration
+
+Some unsupervised methods can be used to extract important features without the need of labeled outcomes. This reduces noise and over-fitting for the model, so it is an interesting option to consider.
+
+### Diagnosis dependence for each feature
+
+```{r discrete-values-histogram, fig.cap="Histogram of values for every feature, colored by diagnosis", fig.pos="H"}
+# Create data frame with categorical data and outcomes
+df <- as.data.frame(train$x) %>%
+  mutate(Diagnosis = train$y)
+
+df %>% dplyr::select(sex, chest_pain_type,
+              fasting_blood_sugar,
+              rest_electrocardiographic,
+              exercise_induced_angina,
+              slope, vessels_number,
+              thalassemia_type, Diagnosis) %>%
+  gather("feature", "value", -Diagnosis) %>%
+  ggplot(aes(value, fill = Diagnosis)) +
+  geom_histogram() +
+  labs(x = "Categorical feature values",
+       y = "Count") +
+  theme(legend.position = "right",
+        axis.text.y = element_blank()) +
+  scale_fill_discrete(labels = c("Disease", "Healthy")) +
+  facet_wrap(~ feature, scales = "free", ncol = 3)
+```
+From Figure 2, it can be noted that patients experiencing exercise-induced angina are more likely to have a heart disease. Also, patients showing left ventricular hypertrophy (value of 2 in the rest_electrocardiographic column) are more likely to have a heart disease, as well as males. All of these conclusions match a naive intuition.
+
+### Feature variance
+
+```{r variance}
+# Use nearZeroVar function and store results
+nzv <- nearZeroVar(train_set, saveMetrics = TRUE)
+```
+
+The caret package provides a function that allows an extensive analysis of the variance within features: nearZeroVar(). For the training set, it shows there is no near-zero or zero variance for none of the features, as Table 6 displays.
+
+```{r near-zer-var-table}
+# Display nearZeroVar results in a table
+nzv %>% kable(caption = "nearZeroVar outcomes", align = "lcccc", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(position = "center",
+                latex_options = c("hold_position"))
+```
+
+The mean frequency ratio is `r round(mean(nzv$freqRatio), 2)`, with a `r percent(sum(nzv$freqRatio <= 2.5)/length(nzv$freqRatio))` of the features showing a frequency ratio of less than 2.5. However, the percentage of unique values is not great, given that some features show discrete values, as explained in Section 2.1.
+
+### Hierarchical clustering
+
+In order to calculate the Euclidean distance between features, the dist() function can be used again. However, as it operates between rows, the matrix with the data needs to be transposed so that the function works as we want it to. Then, hierarchical clustering can be performed, resulting in Figure 3.
+
+```{r clustering, fig.cap= "Dendrogram of features clustered", fig.pos="H"}
+# Hierarchical clustering of predictors
+clustering <- hclust(dist(t(train_set)))
+
+# Dendrogram object
+dend <- as.dendrogram(clustering) %>% set("branches_k_color", k = 5) %>%
+  set("labels_cex", 0.39) %>%
+  set("labels_colors", k = 5)
+
+# ggdend object
+ggd <- as.ggdend(dend)
+
+# Visualization of the dendrogram
+ggplot(ggd, horiz = TRUE, theme = plot_theme) + labs(x = "Features",
+                                                     y = "Distance")
+```
+
+slope and old_peak are the ones that are closest together, and max_heart_rate is the feature that is furthest from the rest. However, except for these ones, the rest have similar distances, and none of the features are significantly close between them.
+
+### Correlation
+
+The distances between and the variance within the features are insightful measures, as well as the correlation between them. The Pearson coefficient was used in this section to calculate the correlations between features and plot them as a heat map..
+
+```{r correlations, fig.cap="Heat map of correlations between features"}
+# Calculate the correlations between the features of the data set
+train_set_correlations <- abs(cor(train_set))
+
+# Plot as a heat map
+heatmap(as.matrix(train_set_correlations),
+        symm = T, revC = T,
+        col = brewer.pal(4, "PuRd"),
+        labCol = NA)
+
+```
+
+The heatmap in Figure 4 shows that most features are not tightly related. Darker colors indicate stronger correlation. There is a significant correlation between old_peak and slope, as the dendrogram in Figure 3 showed. This could be due to the fact that both are measures related to the ST segment.
+
+The age feature shows some correlation with rest_blood_pressure and max_heart_rate, as is intuitive to think.
+
+The features that affect the max_heart_rate are age, thalassemia_type, chest_pain_type, exercise_induced_angina, and vessels_number. We can see that the heart rate is affected by the number of major vessels: the more vessels, the more blood flow. Also, the angina pain type and whether it is induced by exercise or not affect the heart rate, as expected.
+
+It can be seen that max_heart_rate, exercise_induced_angina, and thalassemia_type have correlation with the values obtained in old_peak and slope.
+
+However, the mean correlation is low: the mean is `r round(mean(train_set_correlations), 2)`. This analysis supports the inclusion of all features in the algorithm.
+
+The correlation of each feature with the final diagnosis might be more informative.
+
+```{r correlation-with-diagnosis, fig.cap="Correlation of each feature with the diagnosis", fig.pos="H"}
+# Numeric vector of diagnosis where 0 means healthy and 1 indicates a heart disease
+numeric_diagnosis <- ifelse(train$y == "H", 0, 1)
+
+# Vector of correlations between each feature and the diagnosis vector
+cors_with_diagnosis <- sapply(1:ncol(train$x), function(i){
+  cor(train$x[, i], numeric_diagnosis)
+})
+
+# Create a data frame with the name of each of the 13 features and the correlation of each with the diagnosis
+df2 <- data.frame(Correlation = cors_with_diagnosis, Features = feature_names[1:13])
+
+# Plot it
+df2 %>% ggplot(aes(x = Features, y = cors_with_diagnosis)) +
+  geom_col(fill="blue") +
+  labs(x = "Features",
+       y = "Correlations") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+Figure 5 shows that the fasting_blood_sugar and the cholesterol are the least correlated with the final diagnosis. However, the rest of the features do show some correlation with the diagnosis, especially the chest_pain_type (the type of angina pain experienced), the exercise_induced_angina, the max_heart_rate, the old_peak, the thalassemia_type, and the vessels_number. Thus, predictions can probably be made with a decent accuracy.
+
+### Principal Component Analysis
+
+Principal component analysis can reduce the dimensionality of the problem, which makes the visualizations more informative for data with multiple dimensions. It may also improve the quality of classification models.
+
+```{r principal-component}
+# Create pca object
+pca <- prcomp(train_set)
+
+# Calculate variance scores per principal component
+pca.var <- pca$sdev^2
+pca.var.per <- pca.var/sum(pca.var)
+
+# Create table of principal components
+summary(pca)$importance %>%
+  kable(caption = "Principal Components", booktabs = T, format = "latex") %>%
+  kable_styling(position = "center", latex_options = c("scale_down", "hold_position"))
+```
+
+According to Table 7, the first 4 principal components already account for almost 55% of the cumulative variance. The first 10 principal components account for more than a 90% of the variance.
+
+```{r boxplots, fig.cap="Boxplots by diagnosis"}
+# Create boxplot of the main 10 principal components by diagnosis
+data.frame(pca$x[,1:10], Diagnosis = train$y) %>%
+  gather(key = "PC", value = "value", -Diagnosis) %>%
+  ggplot(aes(PC, value, fill = Diagnosis)) +
+  geom_boxplot() +
+  scale_fill_discrete(name="Diagnosis",
+                      breaks=c("H", "D"),
+                      labels=c("Healthy", "Disease"))
+```
+
+Figure 6 shows two boxplots for each principal components, one for the healthy samples (colored blue) and other for the samples with a disease (colored red). The spread is similar for healthy and unhealthy samples for most principal components. However, the two boxplots of the first principal component are the only ones which don't have overlapping interquartile ranges.
+
+```{r pc1-pc2, fig.cap="PC2 vs PC1", fig.pos="H"}
+# Plot PC2 vs PC1 colored by diagnosis
+data.frame(pca$x[,1:2], Diagnosis = train$y) %>%
+  ggplot(aes(PC1, PC2, color = Diagnosis)) +
+  geom_point() +
+  stat_ellipse() +
+  xlab(paste("PC1: ", percent(pca.var.per[1],0.1))) +
+  ylab(paste("PC2: ", percent(pca.var.per[2],0.1))) +
+  scale_color_discrete(name="Diagnosis",
+                       breaks=c("H", "D"),
+                       labels=c("Healthy", "Disease"))
+```
+
+Figure 7 shows a scatterplot of PC2 vs PC1 colored by diagnosis with the same color code as that of Figure 6. Samples of patients with a disease are slightly more spread out. The ellipses drawn around both types of samples (healthy / unhealthy) show that there is an overlap between both diagnosis, with a significant separation however.
+
+Given the overlap in Figure 7 and the proportion of variance shown by the main principal components, it can be inferred that a Principal Component Analysis will not necessarily offer many more insights.
+
+Summing up, there are patterns for both observations and features. Thus, the algorithm can be developed now.
+
+# *Methods*
+
+## Pre-processing
+
+A data frame was created to store the performance of all the models. As specified in the Data set Exploration, an analysis of the confusion matrix is important. Thus, the performance will be measured with the accuracy, the sensitivity, specificity, and F1 score. This data frame was called "metrics"
+
+```{r metrix-dataframe}
+# Data frame to compare models
+metrics <- data.frame(Model = character(),
+                      Accuracy = double(), 
+                      Sensitivity = double(),
+                      Specificity = double(),
+                      F1 = double())
+```
+
+Also, because of the normalization applied to the training set, the test set should be normalized. This is a safe step as it won't interfere with the result, preventing an over-fitting of the algorithm.
+
+```{r test-normalization}
+## Center the test data around zero
+test_c <- sweep(test$x, 2, colMeans(train$x))
+
+## Scale the test data
+test_set <- sweep(test_c, 2, colSds(train$x), FUN = "/")
+
+rm(test_c)
+```
+
+Cross-validation allows a more extensive training of the algorithm without over-fitting it to the test set. It is also useful when trying to tune parameters, if needed. The control parameters were set for a 6-fold cross validation. A higher number was not chosen as the number of samples is not massive.
+
+```{r cross-validation}
+# Define train control parameters for appropriate models
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 6,
+                           repeats = 8, # perform each cross-validation 8 times
+                           classProbs = TRUE,
+                           returnResamp = "final",
+                           savePredictions = "final")
+```
+
+## Random outcomes
+
+### Non-weighted random sampling
+
+The most naive model would be one that predicted the diagnosis randomly with a 50-50 chance.
+
+```{r random}
+# Same probability for both diagnoses
+prob <- 0.5
+
+# Create a test set for this model (no training set required as there is no training in this model)
+set.seed(20, sample.kind = "Rounding")
+test_index_random <- createDataPartition(train$y, times = 1, p = 0.2, list = FALSE)
+test_random <- list(x = train$x[test_index_random, ], y = train$y[test_index_random])
+
+# Randomly sample outcomes
+set.seed(5, sample.kind = "Rounding")
+random <- sample(c("H", "D"), length(test_index_random), prob = c(1-prob, prob), replace = TRUE) %>%
+  factor(levels = levels(test$y))
+
+# Confusion matrix
+random_matrix <- confusionMatrix(random, test_random$y, positive = "D")
+
+# Append results to metrics data frame
+metrics[1, ] <- c("Random sampling",
+                        format(round(random_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(random_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(random_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(random_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+### Weighted random sampling
+
+The prevalence of the disease in the training set could be taken into account, as this would probably improve our random model.
+
+```{r weighted-random}
+# Weighted probability for "D" or "H"
+prob <- mean(train$y == "D")
+
+# Create a test set for this model (no training set required as there is no training in this model)
+set.seed(2, sample.kind = "Rounding")
+test_index_weighted_random <- createDataPartition(train$y, times = 1, p = 0.2, list = FALSE)
+test_weighted_random <- list(x = train$x[test_index_weighted_random, ], y = train$y[test_index_weighted_random])
+
+# Randomly sample outcomes
+set.seed(5, sample.kind = "Rounding")
+random <- sample(c("H", "D"), length(test_index_weighted_random), prob = c(1-prob, prob),
+                 replace = TRUE) %>%
+  factor(levels = levels(test$y))
+
+# Store confusion matrix
+random_matrix2 <- confusionMatrix(random, test_random$y, positive = "D")
+
+# Append results to metrics data frame
+metrics[2, ] <- c("Weighted random sampling",
+                        format(round(random_matrix2$overall["Accuracy"],2), nsmall = 2),
+                        format(round(random_matrix2$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(random_matrix2$byClass["Specificity"],2), nsmall = 2),
+                        format(round(random_matrix2$byClass["F1"],2), nsmall = 2))
+```
+
+## Unsupervised methods
+
+### K-means clustering
+
+The hierarchical clustering showed that unsupervised clustering might be able to cluster healthy observations from unhealthy observations. However, k-means clustering is a method for continuous data. Thus, the categorical or discrete features will be left out, with age, rest_blood_pressure, cholesterol, max_heart_rate, and old_peak remaining.
+
+In this case, as there are only two classifications (i.e., "healthy" and "disease"), there will be 2 clusters. 2-means clustering will create 2 centers (one for each cluster) and assign every sample to one cluster, according to its Euclidean distance to the cluster's centers. A function can be created for this task. This function received the coordinates of the centers of both clusters by using the function kmeans().
+
+```{r k-means}
+# Exclude discrete features
+continuous_cols_indices <-c(1, 4, 5, 8, 10)
+train_set_continuous <- train_set[, continuous_cols_indices]
+
+# Function for k-means prediction
+predict_kmeans <- function(x, k) {
+  # store centers of every cluster
+  centers <- k$centers
+  # distance from data-points to the cluster centers
+  distances <- sapply(1:nrow(x), function(i){
+    apply(centers, 1, function(y) dist(rbind(x[i,], y)))
+  })
+  # select cluster with min distance to center
+  max.col(-t(distances))
+}
+
+# Create a test set for this model (no training set required as there is no training in this model)
+set.seed(4, sample.kind = "Rounding")
+test_index_kmeans <- createDataPartition(train$y, times = 1, p = 0.2, list = FALSE)
+test_kmeans <- list(x = train_set_continuous[test_index_kmeans, ], y = train$y[test_index_kmeans])
+
+set.seed(19, sample.kind = "Rounding")
+
+# Predict outcome using kmeans model with k=2 and 30 random sets
+k <- kmeans(train_set_continuous, centers = 2, nstart = 30)
+
+# Obtain the predictions
+kmeans <- factor(ifelse(predict_kmeans(test_kmeans$x, k) == 1, "D", "H"))
+
+# Store confusion matrix in 'kmeans_results_1' object
+kmeans_matrix <- confusionMatrix(kmeans, test_kmeans$y, positive = "D")
+
+metrics[3, ] <- c("K-means clustering",
+                  format(round(kmeans_matrix$overall["Accuracy"],2), nsmall = 2),
+                  format(round(kmeans_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                  format(round(kmeans_matrix$byClass["Specificity"],2), nsmall = 2),
+                  format(round(kmeans_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+## Supervised methods
+
+```{r train-test-dev}
+# Create a training and test set for the model development
+set.seed(81, sample.kind = "Rounding")
+test_index_2 <- createDataPartition(train$y, times = 1, p = 0.2, list = FALSE)
+train_2 <- list(x = train_set[-test_index_2, ], y = train$y[-test_index_2])
+test_2 <- list(x = train_set[test_index_2, ], y = train$y[test_index_2])
+```
+
+### Generative modelling
+
+These are supervised predictive methods that model how the data set is distributed and use probability distributions to predict the conditional probability of a specific outcome. The simplest model is the Naive Bayes, which uses the Bayes theorem and assumes equal importance for all features, which is not true in this case.
+
+```{r naive-bayes}
+# Naive Bayes model
+
+set.seed(54, sample.kind = "Rounding")
+
+# Use caret package to train and predict outcomes
+train_bayes <- train(train_2$x, train_2$y, 
+                  method = "nb",
+                  tuneGrid = expand.grid(usekernel = c(FALSE, TRUE), fL = c(0, 1), adjust = c(0, 1)),
+                  trControl = fitControl)
+# Store predictions
+bayes <- predict(train_bayes, test_2$x)
+
+# Confusion matrix
+bayes_matrix <- confusionMatrix(bayes, test_2$y, positive = "D")
+
+# Add model results to metrics
+metrics[4, ] <- c("Naive Bayes",
+                        format(round(bayes_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(bayes_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(bayes_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(bayes_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+More advanced generative models might work better, such as Linear Discriminative Analysis. It assumes that the data are normally distributed.
+
+```{r lda}
+# LDA
+
+set.seed(12, sample.kind = "Rounding")
+
+# Use caret package to train a model
+train_lda <- train(train_2$x, train_2$y, 
+                   method = "lda", 
+                   trControl = fitControl)
+
+# Store predictions
+lda <- predict(train_lda, test_2$x)
+
+# Confusion matrix
+lda_matrix <- confusionMatrix(lda, test_2$y, positive = "D")
+
+# Add results to metrics
+metrics[5, ] <- c("Linear Discriminant Analysis",
+                        format(round(lda_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(lda_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(lda_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(lda_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+Quadratic Discriminative Analysis assumes multivariate normal distributions, and is useful for classes that show different co-variances.
+
+```{r qda}
+# QDA
+
+set.seed(37, sample.kind = "Rounding")
+
+# Train the model
+train_qda <- train(train_2$x, train_2$y, 
+                   method = "qda", 
+                   trControl = fitControl)
+
+# Store predictions
+qda <- predict(train_qda, test_2$x)
+
+# Confusion matrix
+qda_matrix <- confusionMatrix(qda, test_2$y, positive = "D")
+
+# Append to metrics
+metrics[6, ] <- c("Quadratic Discriminant Analysis",
+                        format(round(qda_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(qda_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(qda_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(qda_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+### Discriminative modelling
+
+#### Logistic regression
+
+This is a generalized linear model, assuming that predictors and outcomes follow a bivariate normal distribution, so that the outcome fits a regression line.
+
+```{r glm}
+# Generalized Linear Model (GLM)
+
+set.seed(64, sample.kind = "Rounding")
+
+# Train model
+train_glm <- train(train_2$x, train_2$y, 
+                   method = "glm", 
+                   trControl = fitControl)
+
+# Predictions
+glm <- predict(train_glm, test_2$x)
+
+# Confusion matrix
+glm_matrix <- confusionMatrix(glm, test_2$y, positive = "D")
+
+# Add results to model_results data frame
+metrics[7, ] <- c("Logistic regression",
+                        format(round(glm_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(glm_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(glm_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(glm_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+#### k-Nearest neighbours (knn)
+
+Here, k is the tuning parameter (unlike for k-means clustering) that can be determined using cross-validation. The value of k will be the number of neighbors for the data points taken into consideration when training the algorithm. A greater k results is smoother estimates. To find the best value for k, the tuneGrid argument of the train() function from the caret package was used. The values were all integeres from 1 to 50.
+
+```{r knn}
+# KNN
+
+set.seed(22, sample.kind = "Rounding")
+
+# Train the knn model
+train_knn <- train(train_2$x, train_2$y,
+                   method = "knn",
+                   tuneGrid = data.frame(k = seq(1, 50, 1)),
+                   trControl = fitControl)
+
+# Predictions
+knn <- predict(train_knn, test_2$x)
+
+# Confusion matrix
+knn_matrix <- confusionMatrix(knn, test_2$y, positive = "D")
+
+# Add results to model_results data frame
+metrics[8, ] <- c("K Nearest Neighbour",
+                        format(round(knn_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(knn_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(knn_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(knn_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+#### Random Forest
+
+Random forest models use decision trees to partition the data, allowing final predictions to be made with a smaller subset of predictors. However, decision trees are prone to over-train models. Thus, an ensemble of multiple decision trees will ease this problem. Then, an average of the predictions is calculated to yield the final prediction. In this case, it is the number of randomly chosen predictors included in each decision tree that has to be tuned. The values tunes were the odd numbers between 3 and 15.
+
+```{r random-forest}
+# Random Forest
+
+set.seed(101, sample.kind = "Rounding")
+
+# Train model
+train_rf <- train(train_2$x, train_2$y,
+                  method = "rf",
+                  tuneGrid = data.frame(mtry = seq(3, 15, 2)),
+                  importance = TRUE,
+                  trControl = fitControl)
+
+# Predictions
+rf <- predict(train_rf, test_2$x)
+
+# Confusion matrix
+rf_results <- confusionMatrix(rf, test_2$y, positive = "D")
+
+# Append to metrics
+metrics[9, ] <- c("Random Forest",
+                         format(round(rf_results$overall["Accuracy"],2), nsmall = 2),
+                         format(round(rf_results$byClass["Sensitivity"],2), nsmall = 2),
+                         format(round(rf_results$byClass["Specificity"],2), nsmall = 2),
+                         format(round(rf_results$byClass["F1"],2), nsmall = 2))
+```
+
+#### Neural networks
+
+These models are useful for both multidimensional data and for non-linear data. However, these are computationally expensive, being rather complex algorithms. The most basic neural network models, sigle-layer neural networks, deal with linear data. They are models that apply a weighting to the multidimensional inputs and sum them to classify the model. The method "nnet" from the caret package was used.
+
+```{r neural-networks}
+# Neural networks
+
+set.seed(92, sample.kind = "Rounding")
+
+# Train model
+train_nn <- train(train_2$x, train_2$y,
+                  method = "nnet",
+                  trace = FALSE,
+                  trControl = fitControl)
+
+# Predictions
+nn <- predict(train_nn, test_2$x)
+
+# Confusion matrix
+nn_matrix <- confusionMatrix(nn, test_2$y, positive = "D")
+
+# Append to metrics
+metrics[10, ] <- c("Neural Network",
+                        format(round(nn_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(nn_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(nn_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(nn_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+### Ensemble
+
+The ensembles are combinations of different predictive models. They effectively improve stability and accuracy. The selected models to include in this final ensemble were the ones with higher accuracy. Also, only supervised models were included, given that they are clearly better for labeled data, which is our case.
+
+```{r ensembles}
+# Build ensemble with the already implemented supervised ones
+ensemble <- cbind(glm_e = ifelse(glm == "H", 0, 1), bayes_e = ifelse(bayes =="H", 0, 1), lda_e = ifelse(lda == "H", 0, 1), qda_e = ifelse(qda == "H", 0, 1), rf_e = ifelse(rf == "H", 0, 1), knn_e = ifelse(knn == "H", 0, 1), nn_e = ifelse(nn == "H", 0, 1))
+
+# Predict according to majority vote of all models
+ensemble <- as.factor(ifelse(rowMeans(ensemble) < 0.5, "H", "D"))
+
+# Confusion matrix
+ensemble_matrix <- confusionMatrix(ensemble, test_2$y, positive = "D")
+
+# Add results to model_results data frame
+metrics[11, ] <- c("Ensemble",
+                        format(round(ensemble_matrix$overall["Accuracy"],2), nsmall = 2),
+                        format(round(ensemble_matrix$byClass["Sensitivity"],2), nsmall = 2),
+                        format(round(ensemble_matrix$byClass["Specificity"],2), nsmall = 2),
+                        format(round(ensemble_matrix$byClass["F1"],2), nsmall = 2))
+```
+
+# *Results*
+## **Performance**
+```{r metrics}
+# Table of results
+metrics %>%
+  kable(caption = "Performance of models used", align = "lcccc", booktabs = T,
+        format = "latex", linesep = "") %>%
+  kable_styling(full_width = FALSE, position = "center", latex_options = c("hold_position", "scale_down"))
+```
+
+Table 8 shows the performance of every model tested in this report. It can be confirmed that specificity was higher than sensitivity for most models. This means that there were more false negative predictions than false positives.
+
+Random sampling, as expected, is the least accurate method. There are `r sum(test_random$y == "D")` patients with a heart disease (true positives) and `r sum(test_random$y == "H")` healthy patients (true negatives) in the test set. Looking at Table 8, a sensitivity of 0.48 means that there were 27 false negatives, so 27 patients would be incorrectly diagnosed as healthy. The specificity for this model is also 0.48, meaning 31 patients would be incorrectly diagnosed as having a heart disease.
+
+The weighted random sampling accounted for the prevalence in the data set and improved the specificity to 0.55, meaning now 23 patients would be incorrectly diagnosed as having a heart disease. The sensitivity remained the same as without the weighting, thus improving the overall accuracy.
+
+The first model significantly improving the accuracy of the predictions was the k-means clustering. Its accuracy increased up to an 85% and the specificity was at 0.97. This entails that just 1 person was incorrectly diagnosed as having a heart disease. The sensitivity also improved to a 0.72, meaning 10 patients were classified as negative while actually having the disease.
+
+Supervised models were expected to work better for the labeled data, however only the random forest improved the accuracy of k-means clustering, reaching an 89%.
+
+#*Discussion*
+
+Both the unsupervised and supervised models developed improved the performance compared to the random and weighted random sampling models. Thus, it can be said that the creators of this data set did choose relevant features that could be used as predictors. Even k-means clustering (unsupervised) worked well assuming the data were unlabeled.
+
+Supervised models performed well, all having an accuracy above 80%, except for the neural network model. These are not perfect predictions, they are not even near. Moreover, the F1-score was even lower than the accuracy for all models. Specificity in general was good (around 0.90 for most models), meaning the number of false positives (incorrectly diagnosed as healthy) was low, which is good. In spite of this, the sensitivity had a much lower value (around 0.70 for most models), meaning there are some patients diagnosed as having a heart disease while being healthy. This, of course, poses a risk of over-diagnosis and unnecessary treatments. Usually discriminative models are preferred over generative models. The best model overall, the random forest one, is a discriminative model.
+
+However, the ensemble model might be better, given that it lowers the risk of over-fitting with a single model, instead of considering various.
+
