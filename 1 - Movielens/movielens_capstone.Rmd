@@ -1,0 +1,634 @@
+---
+title: "Movielens Capstone Project"
+author: "Ismael Leal"
+date: "2023-01-13"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+##########################################################
+# Create edx and final_holdout_test sets 
+##########################################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(dplyr)
+library(kableExtra)
+library(stringr)
+library(ggplot2)
+library(lubridate)
+
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+options(timeout = 120)
+
+dl <- "ml-10M100K.zip"
+if(!file.exists(dl))
+  download.file("https://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings_file <- "ml-10M100K/ratings.dat"
+if(!file.exists(ratings_file))
+  unzip(dl, ratings_file)
+
+movies_file <- "ml-10M100K/movies.dat"
+if(!file.exists(movies_file))
+  unzip(dl, movies_file)
+
+ratings <- as.data.frame(str_split(read_lines(ratings_file), fixed("::"), simplify = TRUE),
+                         stringsAsFactors = FALSE)
+colnames(ratings) <- c("userId", "movieId", "rating", "timestamp")
+ratings <- ratings %>%
+  mutate(userId = as.integer(userId),
+         movieId = as.integer(movieId),
+         rating = as.numeric(rating),
+         timestamp = as.integer(timestamp))
+
+movies <- as.data.frame(str_split(read_lines(movies_file), fixed("::"), simplify = TRUE),
+                        stringsAsFactors = FALSE)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- movies %>%
+  mutate(movieId = as.integer(movieId))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Final hold-out test set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding") # if using R 3.6 or later
+# set.seed(1) # if using R 3.5 or earlier
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in final hold-out test set are also in edx set
+final_holdout_test <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from final hold-out test set back into edx set
+removed <- anti_join(temp, final_holdout_test)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+
+# 1. Introduction
+
+Recommendation systems are a vital aspect of multimedia providers. Netflix, HBO, and all similar platforms have a "recommended for you" section personalized for every user. In general, algorithms that recommend specific content to specific users are in great demand, now more than ever. The purpose of this project is to create and assess the accuracy of various models used to recommend movies to users.
+
+The dataset used is a Movielens version with around 10 million movie ratings, including ratings for more than 10,000 movies by over 72,000 users. For the creation and testing of the algorithms, two different subsets were created:
+
+- "Edx": contains a 90% of the original dataset
+
+- A final test set: 10% of the original dataset. This will only be used for testing the algorithms, never for their training. For that means, it was created only containing ratings by users and for movies already present in the train set.
+
+Different models will be created, each taking into account more variables.
+
+# 2. Analysis
+
+The train set must be analysed before the algorithm creation process. It looks like Table 1. It's been assigned the name "edx" and is a data frame with 6 features or columns, of the type displayed in Table 2.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+head(edx) %>% kable(caption = "First 6 rows") %>% kable_styling(font_size = 9,
+                                        position = "center",
+                                        latex_options = c("scale_down"),
+                                        bootstrap_options = c("hover"),
+                                        full_width = TRUE)
+```
+\newpage
+```{r echo = FALSE, message=FALSE, warning=FALSE}
+edx %>% summarise(userId = class(userId),
+                  movieId = class(movieId),
+                  rating = class(rating),
+                  timestamp = class(timestamp),
+                  title = class(title),
+                  genres = class(genres)) %>%
+  kableExtra::kable(caption = "Feature types") %>% kable_styling(font_size = 9,
+                                        position = "center",
+                                        latex_options = c("scale_down"),
+                                        bootstrap_options = c("hover"),
+                                        full_width = TRUE)
+```
+
+
+From the original ~10 million ratings, our train set consists of `r nrow(edx)` ratings. Table 3 shows the number of users that participated in those ratings, the total number of movies that were rated, and the dates of the oldest and newest ratings.
+
+```{r echo = FALSE, warning=FALSE, message=FALSE}
+edx %>% summarise("Unique users" = n_distinct(userId),
+                  "Unique Movies" = n_distinct(movieId),
+                  "First rating" = as.Date(as.POSIXct(min(timestamp),
+                                                    origin = "1970-01-01")),
+                  "Last rating" = as.Date(as.POSIXct(max(timestamp),
+                                                    origin = "1970-01-01"))) %>%
+  kable(caption =  "Users, movies, dates") %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+
+```{r echo = FALSE, out.width="80%", fig.align='center'}
+edx %>% ggplot(aes(rating)) +
+  geom_histogram(fill = "blue", bins = 10, alpha = 0.9, color = "black") +
+  labs(x = "Rating", y = "Count",
+       title = "Fig. 1 - Frequency of every rating") +
+  theme_minimal()
+```
+
+From the histogram in Figure 1 we know that the ratings range from 0.5 to 5, and they can only be integers or half-integers. Integer ratings (i.e. 3, 5) are much more usual than half-integer ratings (i.e. 2.5, 0.5), and most of the ratings are above average. It seems that users are more likely to rate a movie if they have enjoyed it. Let's explore whether there's a clear movie effect or not.
+
+## Movie effect
+A movie density plot will show how many ratings has each movie received.
+\newpage
+
+```{r echo = FALSE, out.width="80%", fig.align='center'}
+movie_summary <- edx %>% group_by(movieId) %>% summarise(n_ratings = n(),
+                                                      mean_rating = mean(rating),
+                                                      sd_rating = sd(rating),
+                                                      first_rating = min(timestamp))
+movie_summary %>% ggplot(aes(n_ratings)) + geom_density(fill = "blue",
+                                                        alpha = 0.9,
+                                                        color = "black") +
+  labs(x = "Number of ratings", y = "Density of films",
+       title = "Fig. 2 - Density plot of the movies") +
+  theme_minimal() +
+  geom_vline(aes(xintercept = unname(quantile(n_ratings, probs = 0.75))),
+             color = "purple") +
+  annotate("text", x = 1300, y = 0.002,
+           label = print(round(unname(quantile(movie_summary$n_ratings, probs = 0.75)))),
+           color = "purple", size = 3.6)
+```
+The density plot of Figure 2 shows a great variation in the number of ratings that films got: it ranges from 1 to 31362. A vertical purple line has been placed in the 3rd quartile of the movies. Thus, a 75% of the movies got less than `r unname(quantile(movie_summary$n_ratings, probs = 0.75))` ratings. However, all the ratings from this 75% of movies just constitute a `r round(movie_summary %>% filter(n_ratings <= 565) %>% pull(n_ratings) %>% sum() / movie_summary %>% pull(n_ratings) %>% sum(), 4) * 100`% of the total ratings. But will movies with fewer ratings be harder to predict?
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+movie_summary %>% ggplot(aes(n_ratings, mean_rating)) + 
+  geom_point(color = "blue", alpha = 0.4) + geom_smooth() +
+  geom_vline(aes(xintercept = unname(quantile(n_ratings, probs = 0.75))),
+             color = "purple") +
+  theme_minimal() +
+  labs(title = "Fig. 3 - Scatter plot of movie's average rating vs number of ratings",
+       x = "Number of ratings",
+       y = "Average rating")
+```
+As Figure 3 shows, movies with fewer number of ratings (located at the left side) can have any average rating, ranging from `r min(movie_summary$mean_rating)` to `r max(movie_summary$mean_rating)`, while movies that have been rated many times have a much more clear average, ranging from near 3 to 4.5. So the more a movie has been rated, the more definite its average rating is. Thus, the predicted ratings will be affected by which movie is being rated and by how many times it has been rated.
+
+## User effect
+Let's now study another variable: the effect of every user, and how this affects the predicted rating.
+
+```{r, echo = FALSE, out.width="80%", fig.align='center', warning=FALSE, message=FALSE}
+user_summary <- edx %>% group_by(userId) %>% summarise(n_u_ratings = n(),
+                                                       mean_u_rating = mean(rating),
+                                                       sd_u_rating = sd(rating))
+user_summary %>% ggplot(aes(n_u_ratings)) + geom_density(fill = "blue",
+                                                         alpha = 0.9,
+                                                         color = "black") +
+  labs(x = "Number of ratings",
+       y = "Density",
+       title = "Fig. 4 - Density plot of user ratings") +
+  theme_minimal() +
+  geom_vline(aes(xintercept = unname(quantile(n_u_ratings, probs = 0.75))),
+             color = "purple") +
+  annotate("text", x = 500, y = 0.007,
+           label = print(round(unname(quantile(user_summary$n_u_ratings, probs = 0.75)))),
+           color = "purple", size = 3.6)
+```
+So again, Figure 4 shows that there are some users with thousands of ratings but a majority of them have less than 1000 ratings. A line representing the 3rd quartile of the users has been drawn: a 75% of the users have submitted less than `r unname(quantile(user_summary$n_u_ratings, probs = 0.75))` ratings. This 75% of users only constitute a `r round(user_summary %>% filter(n_u_ratings <= 141) %>% pull(n_u_ratings) %>% sum() / user_summary %>% pull(n_u_ratings) %>% sum(), 4) * 100`% of the total ratings however.
+
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+user_summary %>% ggplot(aes(n_u_ratings, mean_u_rating)) + 
+  geom_point(color = "blue", alpha = 0.4) + geom_smooth() +
+  geom_vline(aes(xintercept = unname(quantile(n_u_ratings, probs = 0.75))),
+             color = "purple") +
+  theme_minimal() +
+  labs(title = "Fig. 5 - Scatter plot of user's average rating vs number of ratings",
+       x = "Number of ratings",
+       y = "Average rating")
+```
+Figure 5 shows an effect similar to the movies with the users: the more ratings a user has submitted, the easier it will be to predict the rating. Users with less than 200 ratings have average ratings ranging from 0.5 to 5, while users with more than 2000 ratings rate movies with an average between 2.5 and 4.
+
+So it can be inferred that there is also a user effect that affects the ratings.
+
+## Genre effect
+The next variable to study is the genre. As it can be seen in Table 1, the "genres" feature of the train set shows a combination of genres for each film (e.g. Action|Drama). This gives a total of `r edx %>% summarise(n = n_distinct(genres)) %>% pull(n)` distinct genre combinations. Does the rating change for each of these genre combinations?
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+genre_summary <- edx %>% group_by(genres) %>% summarise(count = n(),
+                                       rating = mean(rating))
+genre_summary %>% ggplot(aes(x = reorder(genres, rating), rating)) +
+  geom_col(fill = "blue", alpha = 0.9) +
+  labs(title = "Fig. 6 - Column graph of average rating for every genre combination",
+       x = "Genre combinations", y = "Average rating") +
+  theme_minimal() + theme(axis.ticks.x = element_blank(),
+                          axis.text.x = element_blank())
+```
+Figure 6 shows a great variability in the average rating given to each of the genre combinations. The lowest ratings are just below 1.5 while the highest are close to 5. Therefore, there is also a genre effect that has to be taken into consideration.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+genre_summary %>% ggplot(aes(x = count)) +
+  geom_density(fill = "blue", alpha = 0.9) +
+  labs(title = "Fig. 7 - Density plot of genre combinations",
+       x = "Number of ratings", y = "Density") +
+  theme_minimal() +
+  geom_vline(aes(xintercept = unname(quantile(count, probs = 0.75))),
+             color = "purple") +
+  annotate("text", x = 35000, y = 0.0001,
+           label = print(round(unname(quantile(genre_summary$count, probs = 0.75)))),
+           color = "purple", size = 3.6)
+```
+However, as with the movies and the users, Figure 7 shows that most of the genre combinations have received few ratings, while just a 25% of them have received more than `r unname(quantile(genre_summary$count, probs = 0.75))`.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+genre_summary %>% ggplot(aes(count, rating)) + geom_point(color="blue",
+                                                          alpha = 0.4) +
+  geom_smooth() +
+  labs(title = "Fig. 8 - Average rating versus number of ratings for each genre",
+       x = "Number of ratings", y = "Average rating") +
+  geom_vline(aes(xintercept = unname(quantile(count, probs = 0.75))),
+             color = "purple") +
+  theme_minimal()
+```
+And as with the variables already studied, the genres with less number of ratings show a much greater variability than genres with a large number of ratings.
+
+## Time effect
+Before going into the model-creation, let's study the effect of time on the ratings.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+edx <- edx %>% mutate(release_year = as.integer(substr(title, str_length(title) - 4,
+                                                       str_length(title) - 1)),
+                      rating_time = as.Date(as.POSIXct(timestamp, origin = "1970-01-01")),
+                      rating_year = year(rating_time))
+year_groupings <- edx %>% group_by(release_year) %>% summarise(n = n(),
+                                                               avg = mean(rating))
+year_groupings %>% ggplot(aes(release_year, avg)) +
+  geom_point(fill="blue", alpha = 0.4, color="black") +
+  geom_smooth() + theme_minimal() +
+  labs(title = "Fig. 9 - Average rating per release year",
+       x = "Release year", y = "Average rating")
+```
+Figure 9 shows how average rating decreases for movies released around 1945 or later. It seems that newer movies are rated lower on average. Maybe, however, it's a movie's aging time what affects its rating more than its release year.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, out.width="80%", fig.align='center'}
+#Adding aging time to edx
+edx <- edx %>% left_join(movie_summary, by = "movieId") %>%
+  mutate(aging_time = round((timestamp - first_rating)/3600/24/30, 0))
+
+#Summary table grouped by aging time
+time_summary <- edx %>% group_by(aging_time) %>%
+  summarise(n = n(),
+            mean_rating = mean(rating))
+
+#Plot
+time_summary %>% ggplot(aes(aging_time, mean_rating)) + geom_point(color="black", alpha=0.4) +
+  geom_line(color = "blue", alpha = 0.9) + theme_minimal() +
+  labs(title = "Fig. 10 - Average rating per aging time",
+       x = "Aging time", y = "Average rating")
+```
+Between a month and two months of aging time, the average rating of movies increases, but then keeps decreasing until almost 10 years later, where it blows up to almost 4.2 of rating average.
+
+## RMSE
+We have considered movie, user, genre, and time effects on the ratings to be predicted. Before creating or evaluating any algorithm, let's define a function that calculates the Root Mean Squared Error (RMSE) of our predictions. The quality of algorithms will be set out by this RMSE.
+```{r}
+#This function calculates the RMSE
+RMSE <- function(actual_ratings, predictions){
+  sqrt(mean((actual_ratings - predictions)^2))
+}
+```
+
+# 3. Algorithms
+
+In order to evaluate the RMSE of every model, the "edx" set will be split into train and test sets.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(1, sample.kind = "Rounding")
+test_index2 <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+
+train_set <- edx[-test_index2,]
+pre_test_set <- edx[test_index2,]
+
+# Make sure userId and movieId in test set are also in train set
+test_set <- pre_test_set %>%
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
+
+train_set <- rbind(train_set, anti_join(pre_test_set, test_set))
+rm(pre_test_set, test_index2)
+```
+
+
+## Average
+The most simple algorithm that can be thought of is one that just predicts the average rating for every movie and user:
+
+$\hat{Y}_{u, i} = \mu + \epsilon_{u,i}$,
+
+where $\mu$ is the average rating and has a value of `r mean(train_set$rating)`, and $\epsilon_{u,i}$ accounts for the individual error for the user $u$ and the movie $i$.
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+mu <- mean(train_set$rating)
+
+model_1_pred <- mu
+
+rmse_1 <- RMSE(test_set$rating, model_1_pred )
+```
+
+Of course, a high RMSE is expected from this model, given that it does no prediction apart from the overall average rating. Indeed, the resultant RMSE is `r rmse_1`, and we should hope for less. Let's create a table to save the RMSEs.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+RMSE_df <- data.frame(Method = "Average", RMSE = rmse_1)
+
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+
+## Movie effect
+We now consider a model that implements the clear effect that every movie has on its rating, seen in Figures 2 & 3. The new model's predictions look like this:
+
+$\hat{Y}_{u, i} = \mu + b_i + \epsilon_{u, i}$
+
+where the new term $b_i$ accounts for the effect of movie i. Thus the ratings of the train set $Y_{u, i}$ can be used to find the average $b_i$ of each film like
+
+$b_i = \overline{Y_{u, i} - \mu} = \frac{1}{N}\sum_{j=1}^N(Y_{j, i} - \mu)$
+
+where N is the total number of ratings for the movie i.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+b_i_df <- train_set %>% group_by(movieId) %>% summarise(b_i = mean(rating - mu))
+
+model_2_pred <- test_set %>% left_join(b_i_df, by = "movieId") %>% pull(b_i) + mu
+
+rmse_2 <- RMSE(test_set$rating, model_2_pred)
+
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "Movie Effect",
+                                RMSE = rmse_2))
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+However, as seen in Figure 3, the movie effect is not as clear for movies with less number of ratings. Hence, regularization could help alleviate this effect to find a lower RMSE. For this new regularized model, the $b_i$ now look different:
+
+$b_i = \sum_{j=1}^N\frac{Y_{j, i} - \mu}{N+\lambda_1}$
+
+where the regularization parameter $\lambda_1$ has been included to lower the $b_i$ of movies with fewer ratings.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+  lambdas_movie_effect <- seq(0, 5, 0.2)
+  
+  rmses_reg_movies <- sapply(lambdas_movie_effect, function(x){
+    b_i_reg <- train_set %>% group_by(movieId) %>%
+      summarise(n_i = n(),
+                b_i = sum(rating - mu) / (n_i + x))
+    preds <- test_set %>% left_join(b_i_reg, by = "movieId") %>% .$b_i + mu
+    return(RMSE(test_set$rating, preds))
+  })
+  
+  plot(lambdas_movie_effect, rmses_reg_movies)
+  
+  min_lambda_movie <- which.min(rmses_reg_movies)
+  
+  rmse_3 <- min(rmses_reg_movies)
+```
+
+The best regularization parameter when tried on the test set turns out to be `r lambdas_movie_effect[min_lambda_movie]`
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "Regularized Movie Effect",
+                                RMSE = rmse_3))
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+
+b_i_reg_df <- train_set %>% group_by(movieId) %>%
+  summarise(n = n(),
+            b_i = sum(rating - mu) / (n + 1.6)) %>%
+  select(-n)
+```
+
+## User effect
+
+A more complete algorithm would take into account the user effect seen in Figures 4 and 5. The predictions $\hat{Y}_{u, i}$ could be modeled as:
+
+$\hat{Y}_{u, i} = \mu + b_i + b_u + \epsilon_{u, i}$
+
+where the $b_i$ already have incorporated regularization. The train set ratings $Y_{u, i}$ can be used to find the $b_u$ for each user as:
+
+$b_u = \overline{Y_{u, i} - \mu - b_i}$
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+b_u_df <- train_set %>% left_join(b_i_reg_df, by = "movieId") %>% group_by(userId) %>%
+  summarise(b_u = mean(rating - mu - b_i))
+
+model_4_pred <- test_set %>% left_join(b_i_reg_df, by = "movieId") %>%
+  left_join(b_u_df, by = "userId") %>% mutate(preds = mu + b_i + b_u) %>%
+  .$preds
+
+rmse_4 <- RMSE(test_set$rating, model_4_pred)
+
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "User Effect",
+                                RMSE = rmse_4))
+
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+This model lowers the RMSE in the test set created from the "edx" dataset. However, figure 5 suggests that regularization might be a good idea for the user effect too.
+
+The new $b_u$ would look like:
+
+$b_u = \sum_{j=1}^N\frac{Y_{u, j} - \mu - b_j}{N + \lambda_2}$
+
+where the regularization parameter $\lambda_2$ has been introduced so that the $b_u$ of users with low number of ratings gets lowered.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+lambdas_user_effect <- seq(3, 7, 0.2)
+
+rmses_reg_users <- sapply(lambdas_user_effect, function(z){
+  b_u_reg <- train_set %>% left_join(b_i_reg_df, by = "movieId") %>%
+    group_by(userId) %>%
+    summarise(n_i = n(),
+              b_u = sum(rating - mu - b_i) / (n_i + z))
+  preds <- test_set %>% left_join(b_i_reg_df, by = "movieId") %>%
+    left_join(b_u_reg, by = "userId") %>%
+    mutate(preds = mu + b_i + b_u) %>% .$preds
+  return(RMSE(test_set$rating, preds))
+})
+
+rmse_5 <- min(rmses_reg_users)
+
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "Regularized User Effect",
+                                RMSE = rmse_5))
+
+plot(lambdas_user_effect, rmses_reg_users)
+
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+The best regularization parameter $\lambda_2$ turns out to be `r lambdas_user_effect[which.min(rmses_reg_users)]`. Again, regularization reduced the RMSE, though not too much.
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+b_u_reg_df <- train_set %>% left_join(b_i_reg_df) %>% group_by(userId) %>%
+  summarise(n_u = n(),
+            b_u = sum(rating - mu - b_i) / (n_u + 5)) %>%
+  select(-n_u)
+```
+
+## Genre effect
+
+Let's implement the genre effect discovered in Section 2 to the algorithm. Our new model's predictions would look like:
+
+$\hat{Y}_{u, i} = \mu + b_i + b_u + b_g + \epsilon_{u, i}$
+
+where
+
+$b_g = \overline{Y_{u, i} - \mu - b_i - b_u}$
+
+and $Y_{u, i}$ are the ratings from the train set.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+b_g_df <- train_set %>%
+  left_join(b_u_reg_df, by = "userId") %>%
+  left_join(b_i_reg_df, by = "movieId") %>%
+  group_by(genres) %>%
+  summarise(b_g = mean(rating - mu - b_i - b_u))
+
+model_6_pred <- test_set %>%
+  left_join(b_i_reg_df, by = "movieId") %>%
+  left_join(b_u_reg_df, by = "userId") %>%
+  left_join(b_g_df, by = "genres") %>%
+  mutate(preds = mu + b_i + b_u + b_g) %>%
+  .$preds
+
+rmse_6 <- RMSE(test_set$rating, model_6_pred)
+
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "Genre Effect",
+                                RMSE = rmse_6))
+```
+
+Finally, the genre effect will also be regularized, as Figure 8 suggests.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+lambdas_genres_effect <- seq(0, 20, 2)
+
+rmses_reg_genres <- sapply(lambdas_genres_effect, function(y){
+  b_g_reg <- train_set %>%
+    left_join(b_i_reg_df, by = "movieId") %>%
+    left_join(b_u_reg_df, by = "userId") %>%
+    group_by(genres) %>%
+    summarise(n_i = n(),
+              b_g = sum(rating - mu - b_i - b_u) / (n_i + y))
+  
+  preds <- test_set %>%
+    left_join(b_i_reg_df, by = "movieId") %>%
+    left_join(b_u_reg_df, by = "userId") %>%
+    left_join(b_g_reg, by = "genres") %>%
+    mutate(preds = mu + b_i + b_u + b_g) %>% .$preds
+  return(RMSE(test_set$rating, preds))
+})
+
+rmse_7 <- min(rmses_reg_genres)
+
+RMSE_df_1 <- bind_rows(RMSE_df,
+                     data.frame(Method = "Regularized Genre Effect",
+                                RMSE = rmse_7))
+
+plot(lambdas_genres_effect, rmses_reg_genres)
+
+RMSE_df_1 %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+
+```
+However, the best regularization parameter $\lambda_3$ is equal to `r lambdas_genres_effect[which.min(rmses_reg_genres)]`, so no regularization will take place. Thus, the Regularized Genres Effect model will be taken out of the RMSEs table.
+
+## Time effect
+
+The last variable to add to this model is time. The predictions would look like:
+
+$\hat{Y}_{u, i} = \mu + b_i + b_u + b_g + b_t + \epsilon_{u, i}$
+
+where the train set ratings $Y_{u, i}$ can be used to get the $b_t$:
+
+$b_t = \overline{Y_{u, i} - \mu - b_i - b_u - b_g}$
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+b_t_df <- train_set %>%
+  left_join(b_u_reg_df, by = "userId") %>%
+  left_join(b_i_reg_df, by = "movieId") %>%
+  left_join(b_g_df, by = "genres") %>%
+  group_by(aging_time) %>%
+  summarise(b_t = mean(rating - mu - b_i - b_u - b_g))
+
+model_8_pred <- test_set %>%
+  left_join(b_i_reg_df, by = "movieId") %>%
+  left_join(b_u_reg_df, by = "userId") %>%
+  left_join(b_g_df, by = "genres") %>%
+  left_join(b_t_df, by = "aging_time") %>%
+  mutate(preds = mu + b_i + b_u + b_g + b_t) %>%
+  .$preds
+
+rmse_8 <- RMSE(test_set$rating, model_8_pred)
+
+RMSE_df <- bind_rows(RMSE_df,
+                     data.frame(Method = "Time Effect",
+                                RMSE = rmse_8))
+
+RMSE_df %>% kable() %>% kable_styling(font_size = 9,
+                            position = "center",
+                            latex_options = c("scale_down"),
+                            bootstrap_options = c("hover"),
+                            full_width = TRUE)
+```
+
+# 4. Results
+
+Now that the final model has been developed, it can be tested in the original test set, not the one created later for algorithm development. First, the final test set has to be edited so that it has columns for the $b_i$, $b_u$, $b_g$, and $b_t$. Once this is done, the final prediction can be obtained, with its associated RMSE.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+a <- final_holdout_test %>% group_by(movieId) %>%
+  summarise(first_rating = min(timestamp))
+final_holdout_test <- final_holdout_test %>%
+  left_join(a, by = "movieId") %>%
+  mutate(aging_time = round((timestamp - first_rating)/3600/24/30, 0))
+rm(a)
+
+final_predictions <- final_holdout_test %>%
+  left_join(b_i_reg_df, by = "movieId") %>%
+  left_join(b_u_reg_df, by = "userId") %>%
+  left_join(b_g_df, by = "genres") %>%
+  left_join(b_t_df, by = "aging_time") %>%
+  mutate(pred = mu + b_i + b_u + b_g + b_t) %>%
+  .$pred
+
+final_rmse <- RMSE(final_holdout_test$rating, final_predictions)
+```
+
+The algorithm developed allowed predictions for the ratings to be made, lowering the RMSE to `r final_rmse`.
+
+# 5. Conclusion
+
+The predictors used in this algorithm are the average rating, the specific effect by each movie, user, genre, and by time. The predictors with a highest impact in the RMSE are the movie and the user effects. Regularizing the movie and user effects also helped improving our algorithm. This algorithm will probably fail for a movie with few ratings, or for a user that has given few ratings. However, overall it achieves decent results.
+
+
+
+
