@@ -1,3 +1,7 @@
+# MovieLens Project
+# Author: Ismael Leal Askerova
+# Date: January 2023
+
 # Load libraries
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
 if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
